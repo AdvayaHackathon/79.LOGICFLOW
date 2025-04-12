@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import SpeechRecognition, { useSpeechRecognition } from "react-speech-recognition";
 
 function App() {
   const [messages, setMessages] = useState([
@@ -13,18 +14,18 @@ function App() {
   const bottomRef = useRef(null);
   const sidebarRef = useRef(null);
 
-  const handleSend = async () => {
-    if (!input.trim()) return;
+  const {
+    transcript,
+    listening,
+    resetTranscript,
+    browserSupportsSpeechRecognition,
+  } = useSpeechRecognition();
 
-    const userMessage = input;
-    const aiResponse = `You said: "${input}"`;
+  const handleSend = async (text = input) => {
+    if (!text.trim()) return;
 
-    setMessages((prev) => [
-      ...prev,
-      { sender: "user", text: userMessage },
-      { sender: "bot", text: aiResponse },
-    ]);
-
+    const userMessage = text;
+    setMessages((prev) => [...prev, { sender: "user", text: userMessage }]);
     setSearchHistory((prev) => [
       ...prev,
       { text: userMessage, timestamp: new Date().toLocaleString() },
@@ -32,16 +33,48 @@ function App() {
     setInput("");
 
     try {
-      const res = await fetch("http://localhost:5000/api/save-chat", {
+      const res = await fetch("http://localhost:5000/api/gemini-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: userMessage, language: selectedLanguage }),
+      });
+      const data = await res.json();
+      const aiResponse = data.response || "Sorry, I couldn't understand.";
+      setMessages((prev) => [...prev, { sender: "bot", text: aiResponse }]);
+
+      await fetch("http://localhost:5000/api/save-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userMessage, aiResponse }),
       });
-      const data = await res.json();
-      console.log("✅ API Response:", data);
     } catch (error) {
-      console.error("❌ Error saving chat:", error);
+      console.error("❌ Error:", error);
     }
+  };
+
+  const handleVoiceInput = async () => {
+    resetTranscript();
+    SpeechRecognition.startListening({ language: getSpeechLangCode(selectedLanguage) });
+
+    setTimeout(async () => {
+      SpeechRecognition.stopListening();
+      if (transcript) {
+        setInput(transcript);
+        await handleSend(transcript);
+      }
+    }, 5000); // Listen for 5 seconds
+  };
+
+  const getSpeechLangCode = (lang) => {
+    const map = {
+      English: "en-IN",
+      Hindi: "hi-IN",
+      Tamil: "ta-IN",
+      Telugu: "te-IN",
+      Kannada: "kn-IN",
+      Bengali: "bn-IN",
+    };
+    return map[lang] || "en-IN";
   };
 
   useEffect(() => {
@@ -73,7 +106,6 @@ function App() {
         overflow: "hidden",
       }}
     >
-      {/* Main Container */}
       <div
         style={{
           display: "flex",
@@ -103,8 +135,18 @@ function App() {
               <h2 style={{ marginBottom: "1rem", color: "#ffcccb" }}>
                 Doctor Prescription
               </h2>
-              <button style={sidebarButtonStyle}>💊 Simple Medicines</button>
-              <button style={sidebarButtonStyle}>💊 Complex Medicines</button>
+              <a
+  href="https://www.webmd.com/balance/ss/slideshow-home-remedies"
+  target="_blank"
+  rel="noopener noreferrer"
+  style={{ ...sidebarButtonStyle, display: "inline-block", textDecoration: "none" }}
+>
+  <button style={{ ...sidebarButtonStyle, width: "70%" }}>
+🌿Home Remedies?
+  </button>
+</a>
+
+             
 
               <h3 style={{ marginTop: "2rem", color: "#ffcccb" }}>
                 Search History
@@ -152,31 +194,30 @@ function App() {
           }}
         >
           <button
-  onClick={(e) => {
-    e.stopPropagation();
-    setSidebarOpen((prev) => !prev);
-  }}
-  style={{
-    backgroundColor: "#007bff", // Blue background
-    color: "#fff",              // White ☰ icon
-    border: "none",
-    padding: "0.5rem",
-    marginBottom: "1rem",
-    borderRadius: "6px",
-    width: "40px",
-    height: "40px",
-    fontSize: "20px",
-    cursor: "pointer",
-    boxShadow: "0 2px 5px rgba(0, 0, 0, 0.3)", // subtle shadow
-    transition: "background-color 0.3s ease",
-  }}
-  onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#0056b3")}
-  onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#007bff")}
->
-  ☰
-</button>
+            onClick={(e) => {
+              e.stopPropagation();
+              setSidebarOpen((prev) => !prev);
+            }}
+            style={{
+              backgroundColor: "#007bff",
+              color: "#fff",
+              border: "none",
+              padding: "0.5rem",
+              marginBottom: "1rem",
+              borderRadius: "6px",
+              width: "40px",
+              height: "40px",
+              fontSize: "20px",
+              cursor: "pointer",
+              boxShadow: "0 2px 5px rgba(0, 0, 0, 0.3)",
+              transition: "background-color 0.3s ease",
+            }}
+            onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#0056b3")}
+            onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#007bff")}
+          >
+            ☰
+          </button>
 
-          {/* Avatar & Title */}
           <div style={{ textAlign: "center", marginBottom: "0.5rem" }}>
             <img
               src="https://cdn.pixabay.com/photo/2016/09/16/19/19/icon-1674909_1280.png"
@@ -254,7 +295,7 @@ function App() {
               }}
             />
             <button
-              onClick={handleSend}
+              onClick={() => handleSend()}
               style={{
                 padding: "0.5rem 1.5rem",
                 borderRadius: "50px",
@@ -267,13 +308,13 @@ function App() {
               Send
             </button>
 
-            {/* Language Dropdown */}
+            {/* Voice Input Dropdown */}
             <div style={{ position: "relative" }}>
               <button
                 title="Voice Input"
-                onClick={() => setLanguageDropdownOpen((prev) => !prev)}
+                onClick={handleVoiceInput}
                 style={{
-                  backgroundColor: "#007bff",
+                  backgroundColor: listening ? "red" : "#007bff",
                   border: "none",
                   color: "white",
                   width: "40px",
@@ -290,49 +331,50 @@ function App() {
                 🎤
               </button>
 
-              {languageDropdownOpen && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: "45px",
-                    right: 0,
-                    backgroundColor: "#fff",
-                    border: "1px solid #ccc",
-                    borderRadius: "6px",
-                    boxShadow: "0 2px 5px rgba(0,0,0,0.2)",
-                    zIndex: 5,
-                  }}
-                >
-                  {["English", "Hindi", "Tamil", "Telugu", "Kannada", "Bengali"].map(
-                    (lang) => (
-                      <div
-                        key={lang}
-                        onClick={() => {
-                          setSelectedLanguage(lang);
-                          setLanguageDropdownOpen(false);
-                        }}
-                        style={{
-                          padding: "0.5rem 1rem",
-                          cursor: "pointer",
-                          backgroundColor:
-                            selectedLanguage === lang ? "#f0f0f0" : "#fff",
-                        }}
-                      >
-                        {lang}
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
+              <div style={{ position: "absolute", top: "45px", right: 0 }}>
+                {languageDropdownOpen && (
+                  <div
+                    style={{
+                      backgroundColor: "#fff",
+                      border: "1px solid #ccc",
+                      borderRadius: "6px",
+                      boxShadow: "0 2px 5px rgba(0,0,0,0.2)",
+                      zIndex: 5,
+                    }}
+                  >
+                    {["English", "Hindi", "Tamil", "Telugu", "Kannada", "Bengali"].map(
+                      (lang) => (
+                        <div
+                          key={lang}
+                          onClick={() => {
+                            setSelectedLanguage(lang);
+                            setLanguageDropdownOpen(false);
+                          }}
+                          style={{
+                            padding: "0.5rem 1rem",
+                            cursor: "pointer",
+                            backgroundColor:
+                              selectedLanguage === lang ? "#f0f0f0" : "#fff",
+                          }}
+                        >
+                          {lang}
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
               <p
                 style={{
                   fontSize: "0.7rem",
                   color: "#333",
                   marginTop: "0.2rem",
                   textAlign: "center",
+                  cursor: "pointer",
                 }}
+                onClick={() => setLanguageDropdownOpen((prev) => !prev)}
               >
-                {selectedLanguage}
+                {selectedLanguage} ⏷
               </p>
             </div>
           </div>
@@ -355,4 +397,3 @@ const sidebarButtonStyle = {
 };
 
 export default App;
-
